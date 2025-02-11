@@ -2,8 +2,10 @@ import mido
 import time
 import keyboard  # To detect laptop key presses
 import threading  # To allow concurrent playback and recording
+from threading import Event
 
 start_time = 0.00
+event = Event()
 
 def n_second_print(output_string, t=1):
     if int(time.time() * 1000) % (10*t) == 0: print(f"{output_string}")
@@ -50,6 +52,7 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                 if msg.type in ['note_on', 'note_off']:
                     msg.time = get_seq_note_time()
                     recorded_notes.append(msg)
+                    recorded_notes.sort(key=lambda x: x.time)
                     print(f"Added note: {msg} press q to quit recording...")
 
             if keyboard.is_pressed('q'):
@@ -69,14 +72,20 @@ def play_midi(is_playing, recorded_notes, output_port=None):
         print("No notes recorded!")
         return
 
-    print("Playing... Press 's' to stop and 'q' to add more notes.")
+    n_second_print("Playing... Press 's' to stop and 'q' to add more notes.", 5)
     with mido.open_output(output_port) as outport:
         while is_playing():
             set_seq_start_time()
             for msg in recorded_notes:
-                time.sleep(minmsg.time - get_seq_note_time())  # Delay to maintain timing
+                print(f"Note time: {msg.time}")
+                sleep_time = msg.time - get_seq_note_time()
+                print(f"sleep_time: {sleep_time}")
+                # time.sleep(min(sleep_time, 0))  # Delay to maintain timing
+                # time.sleep(min(5, 0))  # Delay to maintain timing
+                event.wait(sleep_time)
+                print(f"done sleep")
                 outport.send(msg)
-                print(f"Played: {msg} Press 's' to stop and 'q' to add more notes")
+                print(f"Played: {msg} Press 's' to stop and (if overdub) 'q' to add more notes")
 
                 # Check for 's' to stop looping
                 if keyboard.is_pressed('s'):
@@ -84,7 +93,7 @@ def play_midi(is_playing, recorded_notes, output_port=None):
                     return
 
 
-def start_loop(recorded_notes, input_port=None, output_port=None):
+def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
     print("start_loop...")
     playing = [True]  # Mutable object to control playback state
@@ -99,8 +108,37 @@ def start_loop(recorded_notes, input_port=None, output_port=None):
     playback_thread = threading.Thread(target=play_midi, args=(is_playing, recorded_notes, output_port))
     playback_thread.start()
 
+    print("dropping in to start_loop...")
+
     # Allow real-time recording while playing
     record_midi(is_playing, recorded_notes, input_port)
+
+    stop_playing()
+    playback_thread.join()  # Wait for playback to finish
+
+def start_play_loop(recorded_notes, input_port=None, output_port=None):
+    """Starts looping playback and allows overdubbing."""
+    print("start_loop...")
+    playing = [True]  # Mutable object to control playback state
+
+    def is_playing():
+        return playing[0]
+
+    def stop_playing():
+        playing[0] = False
+
+    # Start playback in a separate thread
+    playback_thread = threading.Thread(target=play_midi, args=(is_playing, recorded_notes, output_port))
+    playback_thread.start()
+
+    print("dropping in to start_loop...")
+
+    while is_playing():
+        n_second_print(f"press q to quit playing...", 5)
+
+        if keyboard.is_pressed('q'):
+            print("Stop playing notes.")
+            break;
 
     stop_playing()
     playback_thread.join()  # Wait for playback to finish
@@ -111,18 +149,19 @@ def main():
     input_port = find_input_port()
     output_port = find_output_port()
 
-
-
     while True:
-        n_second_print("\nPress 'r' to record, 'p' to play & overdub, 'x' to exit.", 5)
+        n_second_print("\nPress 'r' to record, 'p' to just play, 'o' to play & overdub, 'x' to exit.", 5)
 
         if keyboard.is_pressed('r'):
             recorded_notes.clear()  # Clear previous recordings
             set_seq_start_time()
             record_midi(lambda: True, recorded_notes, input_port)
 
+        if keyboard.is_pressed('o'):
+            start_overdub_loop(recorded_notes, input_port, output_port)
+
         if keyboard.is_pressed('p'):
-            start_loop(recorded_notes, input_port, output_port)
+            start_play_loop(recorded_notes, input_port, output_port)
 
         if keyboard.is_pressed('x'):
             print("Exiting program.")
