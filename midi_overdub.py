@@ -8,7 +8,7 @@ start_time = 0.00
 event = Event()
 
 def n_second_print(output_string, t=1):
-    if int(time.time() * 1000) % (10*t) == 0: print(f"{output_string}")
+    if (int(time.time()) * 10) % (10*t) == 0: print(f"{output_string}")
 
 def find_input_port():
     result = None
@@ -37,7 +37,7 @@ def set_seq_start_time():
     start_time = time.time()
     print(f"start_time: {start_time}")
 
-def get_seq_note_time():
+def get_seq_elapsed_time():
     print(f"start_time: {start_time}")
     print(f"get_seq_note_time: {time.time() - start_time}")
     return time.time() - start_time
@@ -50,11 +50,10 @@ def record_midi(is_playing, recorded_notes, input_port=None):
         while is_playing():
             for msg in inport.iter_pending():
                 if msg.type in ['note_on', 'note_off']:
-                    msg.time = get_seq_note_time()
+                    print(f"Added note: {msg} press q to quit recording...")
+                    msg.time = get_seq_elapsed_time()
                     recorded_notes.append(msg)
                     recorded_notes.sort(key=lambda x: x.time)
-                    print(f"Added note: {msg} press q to quit recording...")
-
             if keyboard.is_pressed('q'):
                 print("Stopped adding notes.")
                 for msg in recorded_notes:
@@ -66,7 +65,7 @@ def record_midi(is_playing, recorded_notes, input_port=None):
 
 def play_midi(is_playing, recorded_notes, output_port=None):
     """Plays recorded notes in a loop."""
-    print("play_midi...")
+ x   print("play_midi...")
 
     if not recorded_notes:
         print("No notes recorded!")
@@ -77,12 +76,8 @@ def play_midi(is_playing, recorded_notes, output_port=None):
         while is_playing():
             set_seq_start_time()
             for msg in recorded_notes:
-                print(f"Note time: {msg.time}")
-                sleep_time = msg.time - get_seq_note_time()
-                print(f"sleep_time: {sleep_time}")
-                # time.sleep(min(sleep_time, 0))  # Delay to maintain timing
-                # time.sleep(min(5, 0))  # Delay to maintain timing
-                event.wait(sleep_time)
+                sleep_time = msg.time - get_seq_elapsed_time() - recorded_notes[0].time
+                event.wait(max(0, sleep_time))
                 print(f"done sleep")
                 outport.send(msg)
                 print(f"Played: {msg} Press 's' to stop and (if overdub) 'q' to add more notes")
