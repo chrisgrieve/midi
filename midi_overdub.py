@@ -65,7 +65,7 @@ def record_midi(is_playing, recorded_notes, input_port=None):
 
 def play_midi(is_playing, recorded_notes, output_port=None):
     """Plays recorded notes in a loop."""
- x   print("play_midi...")
+    print("play_midi...")
 
     if not recorded_notes:
         print("No notes recorded!")
@@ -76,17 +76,11 @@ def play_midi(is_playing, recorded_notes, output_port=None):
         while is_playing():
             set_seq_start_time()
             for msg in recorded_notes:
-                sleep_time = msg.time - get_seq_elapsed_time() - recorded_notes[0].time
+                sleep_time = msg.time - get_seq_elapsed_time()
                 event.wait(max(0, sleep_time))
                 print(f"done sleep")
                 outport.send(msg)
                 print(f"Played: {msg} Press 's' to stop and (if overdub) 'q' to add more notes")
-
-                # Check for 's' to stop looping
-                if keyboard.is_pressed('s'):
-                    print("Playback stopped.")
-                    return
-
 
 def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
