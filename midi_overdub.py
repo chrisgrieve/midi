@@ -3,43 +3,47 @@ import time
 import keyboard  # To detect laptop key presses
 import threading  # To allow concurrent playback and recording
 from threading import Event
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 start_time = 0.00
 event = Event()
 
 def n_second_print(output_string, t=1):
-    if (int(time.time()) * 10) % (10*t) == 0: 
-        print(f"{output_string}")
+    if (int(time.time()) * 10) % (10 * t) == 0:
+        logging.info(f"{output_string}")
 
 def find_input_port():
     result = None
     # List available MIDI ports
-    print("Available MIDI input ports:")
+    logging.info("Available MIDI input ports:")
     for port in mido.get_input_names():
         if "CASIO" in port:
             result = port
 
-    print(f"found input port: {result}")
+    logging.info(f"found input port: {result}")
     return result
 
 def find_output_port():
     result = None
-    print("Available MIDI output ports:")
+    logging.info("Available MIDI output ports:")
     for port in mido.get_output_names():
         if "CASIO" in port:
             result = port
 
-    print(f"found output port: {result}")
+    logging.info(f"found output port: {result}")
     return result
 
 def set_seq_start_time():
     global start_time
     start_time = time.time()
-    print(f"start_time: {start_time}")
+    logging.info(f"start_time: {start_time}")
 
 def get_seq_elapsed_time():
-    print(f"start_time: {start_time}")
-    print(f"get_seq_note_time: {time.time() - start_time}")
+    logging.info(f"start_time: {start_time}")
+    logging.info(f"get_seq_note_time: {time.time() - start_time}")
     return time.time() - start_time
 
 class Note:
@@ -56,13 +60,9 @@ class Note:
     def __repr__(self):
         return f'Note (ON: {self.note_on_msg}, OFF: {self.note_off_msg})'
 
-
-
-
-
 def record_midi(is_playing, recorded_notes, input_port=None):
     """Continuously records notes and adds them to the sequence."""
-    print("record_midi...")
+    logging.info("record_midi...")
     inport = mido.open_input(input_port) if input_port else mido.open_input()
     active_notes = {}
 
@@ -74,36 +74,34 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                 note = active_notes.pop(msg.note)
                 note.set_note_off(msg)
                 recorded_notes.append(note)
-                print(f"Added note: {note} press q to quit recording...")
+                logging.info(f"Added note: {note} press q to quit recording...")
                 recorded_notes.sort(key=lambda x: x.start_time)
         if keyboard.is_pressed('q'):
-            print("Stopped adding notes.")
+            logging.info("Stopped adding notes.")
             for note in recorded_notes:
-                print(note)
+                logging.info(note)
             return
-            
+
 def play_midi(is_playing, recorded_notes, output_port=None):
     """Plays recorded notes in a loop."""
-    print("play_midi...")
+    logging.info("play_midi...")
     with mido.open_output(output_port) as outport:
         while is_playing():
             set_seq_start_time()
             for note in recorded_notes:
                 sleep_time = note.start_time - get_seq_elapsed_time()
                 event.wait(max(0, sleep_time))
-                print(f"done sleep")
+                logging.info(f"done sleep")
                 outport.send(note.note_on_msg)
-                print(f"Played: {note.note_on_msg} Press 's' to stop and (if overdub) 'q' to add more notes")
+                logging.info(f"Played: {note.note_on_msg} Press 's' to stop and (if overdub) 'q' to add more notes")
                 sleep_time = note.end_time - get_seq_elapsed_time()
                 event.wait(max(0, sleep_time))
                 outport.send(note.note_off_msg)
-                print(f"Played: {note.note_off_msg} Press 's' to stop and (if overdub) 'q' to add more notes")
-
-
+                logging.info(f"Played: {note.note_off_msg} Press 's' to stop and (if overdub) 'q' to add more notes")
 
 def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
-    print("start_loop...")
+    logging.info("start_loop...")
     playing = [True]  # Mutable object to control playback state
 
     def is_playing():
@@ -116,7 +114,7 @@ def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     playback_thread = threading.Thread(target=play_midi, args=(is_playing, recorded_notes, output_port))
     playback_thread.start()
 
-    print("dropping in to start_loop...")
+    logging.info("dropping in to start_loop...")
 
     # Allow real-time recording while playing
     record_midi(is_playing, recorded_notes, input_port)
@@ -126,7 +124,7 @@ def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
 
 def start_play_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
-    print("start_loop...")
+    logging.info("start_loop...")
     playing = [True]  # Mutable object to control playback state
 
     def is_playing():
@@ -139,14 +137,14 @@ def start_play_loop(recorded_notes, input_port=None, output_port=None):
     playback_thread = threading.Thread(target=play_midi, args=(is_playing, recorded_notes, output_port))
     playback_thread.start()
 
-    print("dropping in to start_loop...")
+    logging.info("dropping in to start_loop...")
 
     while is_playing():
         n_second_print(f"press q to quit playing...", 5)
 
         if keyboard.is_pressed('q'):
-            print("Stop playing notes.")
-            break;
+            logging.info("Stop playing notes.")
+            break
 
     stop_playing()
     playback_thread.join()  # Wait for playback to finish
@@ -171,7 +169,7 @@ def main():
             start_play_loop(recorded_notes, input_port, output_port)
 
         if keyboard.is_pressed('x'):
-            print("Exiting program.")
+            logging.info("Exiting program.")
             break
 
         time.sleep(0.1)  # Small delay to prevent high CPU usage
