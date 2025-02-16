@@ -8,7 +8,8 @@ start_time = 0.00
 event = Event()
 
 def n_second_print(output_string, t=1):
-    if (int(time.time()) * 10) % (10*t) == 0: print(f"{output_string}")
+    if (int(time.time()) * 10) % (10*t) == 0: 
+        print(f"{output_string}")
 
 def find_input_port():
     result = None
@@ -31,7 +32,6 @@ def find_output_port():
     print(f"found output port: {result}")
     return result
 
-
 def set_seq_start_time():
     global start_time
     start_time = time.time()
@@ -42,6 +42,11 @@ def get_seq_elapsed_time():
     print(f"get_seq_note_time: {time.time() - start_time}")
     return time.time() - start_time
 
+class Note:
+    def __init__(self, msg):
+        self.msg = msg
+        self.time = get_seq_elapsed_time()
+
 def record_midi(is_playing, recorded_notes, input_port=None):
     """Continuously records notes and adds them to the sequence."""
     print("record_midi...")
@@ -51,17 +56,14 @@ def record_midi(is_playing, recorded_notes, input_port=None):
             for msg in inport.iter_pending():
                 if msg.type in ['note_on', 'note_off']:
                     print(f"Added note: {msg} press q to quit recording...")
-                    msg.time = get_seq_elapsed_time()
-                    recorded_notes.append(msg)
+                    note = Note(msg)
+                    recorded_notes.append(note)
                     recorded_notes.sort(key=lambda x: x.time)
             if keyboard.is_pressed('q'):
                 print("Stopped adding notes.")
-                for msg in recorded_notes:
-                    print(msg)
+                for note in recorded_notes:
+                    print(note.msg)
                 return
-
-
-
 
 def play_midi(is_playing, recorded_notes, output_port=None):
     """Plays recorded notes in a loop."""
@@ -75,12 +77,12 @@ def play_midi(is_playing, recorded_notes, output_port=None):
     with mido.open_output(output_port) as outport:
         while is_playing():
             set_seq_start_time()
-            for msg in recorded_notes:
-                sleep_time = msg.time - get_seq_elapsed_time()
+            for note in recorded_notes:
+                sleep_time = note.time - get_seq_elapsed_time()
                 event.wait(max(0, sleep_time))
                 print(f"done sleep")
-                outport.send(msg)
-                print(f"Played: {msg} Press 's' to stop and (if overdub) 'q' to add more notes")
+                outport.send(note.msg)
+                print(f"Played: {note.msg} Press 's' to stop and (if overdub) 'q' to add more notes")
 
 def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
@@ -132,7 +134,6 @@ def start_play_loop(recorded_notes, input_port=None, output_port=None):
     stop_playing()
     playback_thread.join()  # Wait for playback to finish
 
-
 def main():
     recorded_notes = []
     input_port = find_input_port()
@@ -157,7 +158,6 @@ def main():
             break
 
         time.sleep(0.1)  # Small delay to prevent high CPU usage
-
 
 if __name__ == "__main__":
     main()
