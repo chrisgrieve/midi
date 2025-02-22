@@ -2,8 +2,9 @@ import mido
 import time
 import keyboard  # To detect laptop key presses
 import threading  # To allow concurrent playback and recording
-from threading import Event
 import logging
+from threading import Event
+import heapq
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -82,22 +83,24 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                 logging.info(note)
             return
 
-def play_midi(is_playing, recorded_notes, output_port=None):
-    """Plays recorded notes in a loop."""
-    logging.info("play_midi...")
+def play_midi_smarter(is_playing, recorded_notes, output_port=None):
+    """Plays recorded notes, handling overlapping notes more efficiently."""
+    logging.info("play_midi_smarter...")
     with mido.open_output(output_port) as outport:
+        events = []
+        for note in recorded_notes:
+            # Push note on and off events to the priority queue
+            heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
+            heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
+        
         while is_playing():
             set_seq_start_time()
-            for note in recorded_notes:
-                sleep_time = note.start_time - get_seq_elapsed_time()
+            while events:
+                event_time, msg, event_type = heapq.heappop(events)
+                sleep_time = event_time - get_seq_elapsed_time()
                 event.wait(max(0, sleep_time))
-                logging.info(f"done sleep")
-                outport.send(note.note_on_msg)
-                logging.info(f"Played: {note.note_on_msg} Press 's' to stop and (if overdub) 'q' to add more notes")
-                sleep_time = note.end_time - get_seq_elapsed_time()
-                event.wait(max(0, sleep_time))
-                outport.send(note.note_off_msg)
-                logging.info(f"Played: {note.note_off_msg} Press 's' to stop and (if overdub) 'q' to add more notes")
+                outport.send(msg)
+                logging.info(f"Played: {msg} ({event_type})")
 
 def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
@@ -111,7 +114,7 @@ def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
         playing[0] = False
 
     # Start playback in a separate thread
-    playback_thread = threading.Thread(target=play_midi, args=(is_playing, recorded_notes, output_port))
+    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, recorded_notes, output_port))
     playback_thread.start()
 
     logging.info("dropping in to start_loop...")
@@ -134,7 +137,7 @@ def start_play_loop(recorded_notes, input_port=None, output_port=None):
         playing[0] = False
 
     # Start playback in a separate thread
-    playback_thread = threading.Thread(target=play_midi, args=(is_playing, recorded_notes, output_port))
+    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, recorded_notes, output_port))
     playback_thread.start()
 
     logging.info("dropping in to start_loop...")
