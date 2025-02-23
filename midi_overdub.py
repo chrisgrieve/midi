@@ -14,7 +14,7 @@ event = Event()
 
 def n_second_print(output_string, t=1):
     if (int(time.time()) * 10) % (10 * t) == 0:
-        logging.info(f"{output_string}")
+        print(f"{output_string}")
 
 def find_input_port():
     result = None
@@ -40,11 +40,11 @@ def find_output_port():
 def set_seq_start_time():
     global start_time
     start_time = time.time()
-    logging.info(f"start_time: {start_time}")
+    logging.debug(f"start_time: {start_time}")
 
 def get_seq_elapsed_time():
-    logging.info(f"start_time: {start_time}")
-    logging.info(f"get_seq_elapsed_time: {time.time() - start_time}")
+    logging.debug(f"start_time: {start_time}")
+    logging.debug(f"get_seq_elapsed_time: {time.time() - start_time}")
     return time.time() - start_time
 
 class Note:
@@ -75,12 +75,12 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                     note = active_notes.pop(msg.note)
                     note.set_note_off(msg)
                     recorded_notes.append(note)
-                    logging.info(f"Added note: {note} press q to quit recording...")
+                    n_second_print(f"RECORD MENU - Added note: {note} press q to quit recording...", 5)
                     recorded_notes.sort(key=lambda x: x.start_time)
             if keyboard.is_pressed('q'):
                 logging.info("Stopped adding notes.")
                 for note in recorded_notes:
-                    logging.info(note)
+                    logging.debug(note)
                 return
 
 def play_midi_smarter(is_playing, recorded_notes, output_port=None):
@@ -90,10 +90,7 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
         events = []
         event_times = set()
         for note in recorded_notes:
-            print(f"note1: {note}")
-            # note = set_note_unique_time(event_times, note)
             # Push note on and off events to the priority queue
-            print(f"note2: {note}")
             heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
             heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
         
@@ -103,23 +100,12 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
             heapq.heapify(loop_events)  # Ensure it's a valid heap
             while loop_events:
                 event_time, msg, event_type = heapq.heappop(loop_events)
-                logging.info(f"event_time: {event_time})")
+                logging.debug(f"event_time: {event_time})")
                 sleep_time = event_time - get_seq_elapsed_time()
-                logging.info(f"sleep_time: {sleep_time})")
+                logging.debug(f"sleep_time: {sleep_time})")
                 event.wait(max(0, sleep_time))
                 outport.send(msg)
-                logging.info(f"Played: {msg} ({event_type})")
-
-
-def set_note_unique_time(event_times, note):
-    while note.start_time in event_times:
-        note.start_time = note.start_time + 0.001
-    event_times.add(note.start_time)
-    while note.end_time in event_times:
-        note.end_time = note.end_time + 0.001
-    event_times.add(note.end_time)
-    return note
-
+                logging.debug(f"Played: {msg} ({event_type})")
 
 def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
@@ -162,7 +148,7 @@ def start_play_loop(recorded_notes, input_port=None, output_port=None):
     logging.info("dropping in to start_loop...")
 
     while is_playing():
-        n_second_print(f"press q to quit playing...", 5)
+        n_second_print(f"PLAY MENU: press q to quit playing...", 5)
 
         if keyboard.is_pressed('q'):
             logging.info("Stop playing notes.")
@@ -177,7 +163,7 @@ def main():
     output_port = find_output_port()
 
     while True:
-        n_second_print("\nPress 'r' to record, 'p' to just play, 'o' to play & overdub, 'x' to exit.", 5)
+        n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 'x' to exit.", 5)
 
         if keyboard.is_pressed('r'):
             recorded_notes.clear()  # Clear previous recordings
