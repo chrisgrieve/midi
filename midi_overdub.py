@@ -50,9 +50,8 @@ def get_seq_elapsed_time():
 class Note:
     def __init__(self, note_on_msg, note_off_msg=None):
         self.note_on_msg = note_on_msg
-        self.note_off_msg = note_off_msg if note_off_msg else note_on_msg
+        self.note_off_msg = note_off_msg
         self.start_time = note_on_msg.time
-        self.end_time = note_off_msg.time if note_off_msg else note_on_msg.time+0.001
 
     def set_note_off(self, note_off_msg):
         self.note_off_msg = note_off_msg
@@ -74,6 +73,7 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                 active_notes[msg.note] = Note(msg)
             elif msg.type == 'note_off' and msg.note in active_notes:
                 note = active_notes.pop(msg.note)
+                note.set_note_off(msg)
                 recorded_notes.append(note)
                 logging.info(f"Added note: {note} press q to quit recording...")
                 recorded_notes.sort(key=lambda x: x.start_time)
@@ -91,7 +91,7 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
         event_times = set()
         for note in recorded_notes:
             print(f"note1: {note}")
-            note = set_note_unique_time(event_times, note)
+            # note = set_note_unique_time(event_times, note)
             # Push note on and off events to the priority queue
             print(f"note2: {note}")
             heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
@@ -99,8 +99,10 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
         
         while is_playing():
             set_seq_start_time()
-            while events:
-                event_time, msg, event_type = heapq.heappop(events)
+            loop_events = list(events)  # Create a copy of the events heap
+            heapq.heapify(loop_events)  # Ensure it's a valid heap
+            while loop_events:
+                event_time, msg, event_type = heapq.heappop(loop_events)
                 logging.info(f"event_time: {event_time})")
                 sleep_time = event_time - get_seq_elapsed_time()
                 logging.info(f"sleep_time: {sleep_time})")
