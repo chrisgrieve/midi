@@ -50,10 +50,9 @@ def get_seq_elapsed_time():
 class Note:
     def __init__(self, note_on_msg, note_off_msg=None):
         self.note_on_msg = note_on_msg
-        self.note_off_msg = note_off_msg if note_off_msg else self.note_off_msg = self.note_on_msg
-        self.note_off_msg = note_off_msg
+        self.note_off_msg = note_off_msg if note_off_msg else note_on_msg
         self.start_time = note_on_msg.time
-        self.end_time = note_off_msg.time if note_off_msg else None
+        self.end_time = note_off_msg.time if note_off_msg else note_on_msg.time
 
     def set_note_off(self, note_off_msg):
         self.note_off_msg = note_off_msg
