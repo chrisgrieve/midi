@@ -68,6 +68,9 @@ def record_midi(is_playing, recorded_notes, input_port=None):
     with mido.open_input(input_port) as inport:
         while is_playing():
             for msg in inport.iter_pending():
+                if not (active_notes or recorded_notes):
+                    set_seq_start_time()
+
                 msg.time = get_seq_elapsed_time()
                 if msg.type == 'note_on':
                     active_notes[msg.note] = Note(msg)
@@ -75,7 +78,7 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                     note = active_notes.pop(msg.note)
                     note.set_note_off(msg)
                     recorded_notes.append(note)
-                    n_second_print(f"RECORD MENU - Added note: {note} press q to quit recording...", 5)
+                    n_second_print(f"\nRECORD MENU - Added note: {note} press q to quit recording...", 5)
                     recorded_notes.sort(key=lambda x: x.start_time)
             if keyboard.is_pressed('q'):
                 logging.info("Stopped adding notes.")
@@ -157,7 +160,7 @@ def start_play_loop(recorded_notes, input_port=None, output_port=None):
     logging.info("dropping in to start_loop...")
 
     while is_playing():
-        n_second_print(f"PLAY MENU: press q to quit playing...", 5)
+        n_second_print(f"\nPLAY MENU: press q to quit playing...", 5)
 
         if keyboard.is_pressed('q'):
             logging.info("Stop playing notes.")
