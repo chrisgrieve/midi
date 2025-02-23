@@ -44,7 +44,7 @@ def set_seq_start_time():
 
 def get_seq_elapsed_time():
     logging.info(f"start_time: {start_time}")
-    logging.info(f"get_seq_note_time: {time.time() - start_time}")
+    logging.info(f"get_seq_elapsed_time: {time.time() - start_time}")
     return time.time() - start_time
 
 class Note:
@@ -52,7 +52,7 @@ class Note:
         self.note_on_msg = note_on_msg
         self.note_off_msg = note_off_msg if note_off_msg else note_on_msg
         self.start_time = note_on_msg.time
-        self.end_time = note_off_msg.time if note_off_msg else note_on_msg.time
+        self.end_time = note_off_msg.time if note_off_msg else note_on_msg.time+0.001
 
     def set_note_off(self, note_off_msg):
         self.note_off_msg = note_off_msg
@@ -69,11 +69,11 @@ def record_midi(is_playing, recorded_notes, input_port=None):
 
     while is_playing():
         for msg in inport.iter_pending():
+            msg.time = get_seq_elapsed_time()
             if msg.type == 'note_on':
                 active_notes[msg.note] = Note(msg)
             elif msg.type == 'note_off' and msg.note in active_notes:
                 note = active_notes.pop(msg.note)
-                note.set_note_off(msg)
                 recorded_notes.append(note)
                 logging.info(f"Added note: {note} press q to quit recording...")
                 recorded_notes.sort(key=lambda x: x.start_time)
@@ -88,8 +88,12 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
     logging.info("play_midi_smarter...")
     with mido.open_output(output_port) as outport:
         events = []
+        event_times = set()
         for note in recorded_notes:
+            print(f"note1: {note}")
+            note = set_note_unique_time(event_times, note)
             # Push note on and off events to the priority queue
+            print(f"note2: {note}")
             heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
             heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
         
@@ -97,10 +101,23 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
             set_seq_start_time()
             while events:
                 event_time, msg, event_type = heapq.heappop(events)
+                logging.info(f"event_time: {event_time})")
                 sleep_time = event_time - get_seq_elapsed_time()
+                logging.info(f"sleep_time: {sleep_time})")
                 event.wait(max(0, sleep_time))
                 outport.send(msg)
                 logging.info(f"Played: {msg} ({event_type})")
+
+
+def set_note_unique_time(event_times, note):
+    while note.start_time in event_times:
+        note.start_time = note.start_time + 0.001
+    event_times.add(note.start_time)
+    while note.end_time in event_times:
+        note.end_time = note.end_time + 0.001
+    event_times.add(note.end_time)
+    return note
+
 
 def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
