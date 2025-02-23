@@ -88,13 +88,14 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
     logging.info("play_midi_smarter...")
     with mido.open_output(output_port) as outport:
         events = []
-        event_times = set()
-        for note in recorded_notes:
-            # Push note on and off events to the priority queue
-            heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
-            heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
-        
+        update_event_queue(events, recorded_notes)
+        recorded_notes_size = len(recorded_notes)
+
         while is_playing():
+            if(recorded_notes_size !=  len(recorded_notes)):
+                update_event_queue(events, recorded_notes)
+                recorded_notes_size = len(recorded_notes)
+
             set_seq_start_time()
             loop_events = list(events)  # Create a copy of the events heap
             heapq.heapify(loop_events)  # Ensure it's a valid heap
@@ -106,6 +107,14 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
                 event.wait(max(0, sleep_time))
                 outport.send(msg)
                 logging.debug(f"Played: {msg} ({event_type})")
+
+
+def update_event_queue(events, recorded_notes):
+    for note in recorded_notes:
+        # Push note on and off events to the priority queue
+        heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
+        heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
+
 
 def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
