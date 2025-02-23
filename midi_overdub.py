@@ -63,25 +63,25 @@ class Note:
 def record_midi(is_playing, recorded_notes, input_port=None):
     """Continuously records notes and adds them to the sequence."""
     logging.info("record_midi...")
-    inport = mido.open_input(input_port) if input_port else mido.open_input()
     active_notes = {}
 
-    while is_playing():
-        for msg in inport.iter_pending():
-            msg.time = get_seq_elapsed_time()
-            if msg.type == 'note_on':
-                active_notes[msg.note] = Note(msg)
-            elif msg.type == 'note_off' and msg.note in active_notes:
-                note = active_notes.pop(msg.note)
-                note.set_note_off(msg)
-                recorded_notes.append(note)
-                logging.info(f"Added note: {note} press q to quit recording...")
-                recorded_notes.sort(key=lambda x: x.start_time)
-        if keyboard.is_pressed('q'):
-            logging.info("Stopped adding notes.")
-            for note in recorded_notes:
-                logging.info(note)
-            return
+    with mido.open_input(input_port) as inport:
+        while is_playing():
+            for msg in inport.iter_pending():
+                msg.time = get_seq_elapsed_time()
+                if msg.type == 'note_on':
+                    active_notes[msg.note] = Note(msg)
+                elif msg.type == 'note_off' and msg.note in active_notes:
+                    note = active_notes.pop(msg.note)
+                    note.set_note_off(msg)
+                    recorded_notes.append(note)
+                    logging.info(f"Added note: {note} press q to quit recording...")
+                    recorded_notes.sort(key=lambda x: x.start_time)
+            if keyboard.is_pressed('q'):
+                logging.info("Stopped adding notes.")
+                for note in recorded_notes:
+                    logging.info(note)
+                return
 
 def play_midi_smarter(is_playing, recorded_notes, output_port=None):
     """Plays recorded notes, handling overlapping notes more efficiently."""
