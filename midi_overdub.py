@@ -12,6 +12,63 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 start_time = 0.00
 event = Event()
 
+def export_to_midi(recorded_notes, filename="output.mid"):
+    """
+    Exports the recorded notes to a MIDI (.mid) file.
+    Args:
+        recorded_notes (list): List of recorded notes in your custom format.
+        filename (str): Name of the MIDI file to save.
+    """
+    mid = mido.MidiFile()  # Create a new MIDI file
+    track = mido.MidiTrack()  # Create a new track
+    mid.tracks.append(track)
+
+    for note in recorded_notes:
+        # Add Note On event
+        track.append(mido.Message('note_on', note=note.note_on_msg.note,
+                                  velocity=note.note_on_msg.velocity, time=int(note.start_time * 1000)))
+        # Add Note Off event
+        track.append(mido.Message('note_off', note=note.note_off_msg.note,
+                                  velocity=note.note_off_msg.velocity, time=int(note.end_time * 1000)))
+
+    # Save the MIDI file
+    mid.save(filename)
+    logging.info(f"Exported to MIDI file: {filename}")
+
+
+def import_from_midi(filename="output.mid"):
+    """
+    Imports a MIDI (.mid) file and converts it into the recorded_notes format.
+    Args:
+        filename (str): Name of the MIDI file to load.
+    Returns:
+        list: Recorded notes in your custom format.
+    """
+    mid = mido.MidiFile(filename)  # Load the MIDI file
+    recorded_notes = []
+    active_notes = {}
+
+    for track in mid.tracks:
+        elapsed_time = 0
+        for msg in track:
+            elapsed_time += msg.time / 1000.0  # Convert time from ms to seconds
+            if msg.type == 'note_on' and msg.velocity > 0:
+                # Create a new Note object for Note On messages
+                active_notes[msg.note] = Note(mido.Message('note_on', note=msg.note,
+                                                           velocity=msg.velocity, time=elapsed_time))
+            elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                # Complete the Note object for Note Off messages
+                if msg.note in active_notes:
+                    note = active_notes.pop(msg.note)
+                    note.set_note_off(mido.Message('note_off', note=msg.note,
+                                                   velocity=msg.velocity, time=elapsed_time))
+                    recorded_notes.append(note)
+
+    # Sort notes by their start time
+    recorded_notes.sort(key=lambda x: x.start_time)
+    logging.info(f"Imported from MIDI file: {filename}")
+    return recorded_notes
+
 def n_second_print(output_string, t=1):
     if (int(time.time()) * 10) % (10 * t) == 0:
         print(f"{output_string}")
@@ -175,7 +232,7 @@ def main():
     output_port = find_output_port()
 
     while True:
-        n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 'x' to exit.", 5)
+        n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 's' to save, 'l' to load, 'x' to exit.", 5)
 
         if keyboard.is_pressed('r'):
             recorded_notes.clear()  # Clear previous recordings
@@ -187,6 +244,24 @@ def main():
 
         if keyboard.is_pressed('p'):
             start_play_loop(recorded_notes, input_port, output_port)
+
+        if keyboard.is_pressed('s'):
+            # Save the recorded notes as a timestamped MIDI file
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"recording_{timestamp}.mid"
+            export_to_midi(recorded_notes, filename=filename)
+            logging.info(f"Saved recording as {filename}")
+
+        if keyboard.is_pressed('l'):
+            # Load MIDI file into recorded_notes
+            filename = input("Enter the filename of the MIDI file to load: ").strip()
+            try:
+                recorded_notes = import_from_midi(filename)
+                logging.info(f"Successfully loaded MIDI file: {filename}")
+            except FileNotFoundError:
+                logging.error(f"File not found: {filename}")
+            except Exception as e:
+                logging.error(f"Failed to load MIDI file: {e}")
 
         if keyboard.is_pressed('x'):
             logging.info("Exiting program.")
