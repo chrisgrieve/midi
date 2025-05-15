@@ -12,62 +12,53 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 start_time = 0.00
 event = Event()
 
-def export_to_midi(recorded_notes, filename="output.mid"):
-    """
-    Exports the recorded notes to a MIDI (.mid) file.
-    Args:
-        recorded_notes (list): List of recorded notes in your custom format.
-        filename (str): Name of the MIDI file to save.
-    """
-    mid = mido.MidiFile()  # Create a new MIDI file
-    track = mido.MidiTrack()  # Create a new track
+def export_to_midi(recorded_notes, filename="output.mid", tempo=120, ticks_per_beat=480):
+    mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
+    track = mido.MidiTrack()
     mid.tracks.append(track)
 
-    for note in recorded_notes:
-        # Add Note On event
-        track.append(mido.Message('note_on', note=note.note_on_msg.note,
-                                  velocity=note.note_on_msg.velocity, time=int(note.start_time * 1000)))
-        # Add Note Off event
-        track.append(mido.Message('note_off', note=note.note_off_msg.note,
-                                  velocity=note.note_off_msg.velocity, time=int(note.end_time * 1000)))
+    # Insert tempo event
+    microseconds_per_beat = int(60_000_000 / tempo)
+    track.append(mido.MetaMessage('set_tempo', tempo=microseconds_per_beat, time=0))
 
-    # Save the MIDI file
+    # Sort notes by start_time
+    notes = sorted(recorded_notes, key=lambda n: n.start_time)
+    last_tick = 0
+
+    for note in notes:
+        start_tick = int(note.start_time * ticks_per_beat * tempo / 60)
+        delta = start_tick - last_tick
+        track.append(mido.Message('note_on', note=note.note_on_msg.note, velocity=note.note_on_msg.velocity, time=delta))
+        end_tick = int(note.end_time * ticks_per_beat * tempo / 60)
+        track.append(mido.Message('note_off', note=note.note_off_msg.note, velocity=note.note_off_msg.velocity, time=end_tick - start_tick))
+        last_tick = end_tick
+
     mid.save(filename)
-    logging.info(f"Exported to MIDI file: {filename}")
 
-
-def import_from_midi(filename="output.mid"):
-    """
-    Imports a MIDI (.mid) file and converts it into the recorded_notes format.
-    Args:
-        filename (str): Name of the MIDI file to load.
-    Returns:
-        list: Recorded notes in your custom format.
-    """
-    mid = mido.MidiFile(filename)  # Load the MIDI file
+def import_from_midi(filename="output.mid", tempo=120, ticks_per_beat=480):
+    mid = mido.MidiFile(filename)
     recorded_notes = []
     active_notes = {}
+    tempo = 120  # Default, can be read from the MIDI file if needed
 
     for track in mid.tracks:
-        elapsed_time = 0
+        elapsed_ticks = 0
         for msg in track:
-            elapsed_time += msg.time / 1000.0  # Convert time from ms to seconds
-            if msg.type == 'note_on' and msg.velocity > 0:
-                # Create a new Note object for Note On messages
-                active_notes[msg.note] = Note(mido.Message('note_on', note=msg.note,
-                                                           velocity=msg.velocity, time=elapsed_time))
+            elapsed_ticks += msg.time
+            if msg.type == 'set_tempo':
+                tempo = mido.tempo2bpm(msg.tempo)
+            elif msg.type == 'note_on' and msg.velocity > 0:
+                elapsed_time = elapsed_ticks * 60 / (ticks_per_beat * tempo)
+                active_notes[msg.note] = Note(mido.Message('note_on', note=msg.note, velocity=msg.velocity, time=elapsed_time))
             elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                # Complete the Note object for Note Off messages
                 if msg.note in active_notes:
+                    elapsed_time = elapsed_ticks * 60 / (ticks_per_beat * tempo)
                     note = active_notes.pop(msg.note)
-                    note.set_note_off(mido.Message('note_off', note=msg.note,
-                                                   velocity=msg.velocity, time=elapsed_time))
+                    note.set_note_off(mido.Message('note_off', note=msg.note, velocity=msg.velocity, time=elapsed_time))
                     recorded_notes.append(note)
-
-    # Sort notes by their start time
     recorded_notes.sort(key=lambda x: x.start_time)
-    logging.info(f"Imported from MIDI file: {filename}")
     return recorded_notes
+
 
 def n_second_print(output_string, t=1):
     if (int(time.time()) * 10) % (10 * t) == 0:
