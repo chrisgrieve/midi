@@ -12,13 +12,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 start_time = 0.00
 event = Event()
 
-def export_to_midi(recorded_notes, filename="output.mid", tempo=120, ticks_per_beat=480):
+def export_to_midi(recorded_notes, filename="output.mid"):
     mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
     track = mido.MidiTrack()
     mid.tracks.append(track)
 
     # Insert tempo event
-    microseconds_per_beat = int(60_000_000 / tempo)
+    microseconds_per_beat = int(60_000_000 / 120)
     track.append(mido.MetaMessage('set_tempo', tempo=microseconds_per_beat, time=0))
 
     # Sort notes by start_time
@@ -26,16 +26,63 @@ def export_to_midi(recorded_notes, filename="output.mid", tempo=120, ticks_per_b
     last_tick = 0
 
     for note in notes:
-        start_tick = int(note.start_time * ticks_per_beat * tempo / 60)
-        delta = start_tick - last_tick
-        track.append(mido.Message('note_on', note=note.note_on_msg.note, velocity=note.note_on_msg.velocity, time=delta))
-        end_tick = int(note.end_time * ticks_per_beat * tempo / 60)
-        track.append(mido.Message('note_off', note=note.note_off_msg.note, velocity=note.note_off_msg.velocity, time=end_tick - start_tick))
-        last_tick = end_tick
+        track.append(mido.Message('note_on', note=note.note_on_msg.note, velocity=note.note_on_msg.velocity, time=note.start_time))
+        track.append(mido.Message('note_off', note=note.note_off_msg.note, velocity=note.note_off_msg.velocity, time=note.end_time))
 
     mid.save(filename)
 
-def import_from_midi(filename="output.mid", tempo=120, ticks_per_beat=480):
+def export_to_midi(notes, filename='output.mid', bpm=120):
+    mid = mido.MidiFile()
+    track = mido.MidiTrack()
+    mid.tracks.append(track)
+
+    # Insert tempo meta message at the beginning
+    tempo = mido.bpm2tempo(bpm)
+    track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
+
+    # Prepare note_on and note_off events
+    events = []
+    for note in notes:
+        events.append({'time': note.start_time, 'msg': mido.Message('note_on', note=note.note_on_msg.note, velocity=note.note_on_msg.velocity,)})
+        events.append({'time': note.end_time, 'msg': mido.Message('note_off', note=note.note_off_msg.note, velocity=note.note_off_msg.velocity,)})
+
+    # Sort events by absolute time
+    events.sort(key=lambda e: e['time'])
+
+    # Convert to delta time in ticks
+    last_time = 0
+    for event in events:
+        delta_ticks = int(mido.second2tick(event['time'] - last_time, mid.ticks_per_beat, tempo))
+        event['msg'].time = delta_ticks
+        track.append(event['msg'])
+        last_time = event['time']
+
+    mid.save(filename)
+
+# def export_to_midi(recorded_notes, filename="output.mid", tempo=120, ticks_per_beat=480):
+#     mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
+#     track = mido.MidiTrack()
+#     mid.tracks.append(track)
+#
+#     # Insert tempo event
+#     microseconds_per_beat = int(60_000_000 / tempo)
+#     track.append(mido.MetaMessage('set_tempo', tempo=microseconds_per_beat, time=0))
+#
+#     # Sort notes by start_time
+#     notes = sorted(recorded_notes, key=lambda n: n.start_time)
+#     last_tick = 0
+#
+#     for note in notes:
+#         start_tick = int(note.start_time * ticks_per_beat * tempo / 60)
+#         delta = start_tick - last_tick
+#         track.append(mido.Message('note_on', note=note.note_on_msg.note, velocity=note.note_on_msg.velocity, time=delta))
+#         end_tick = int(note.end_time * ticks_per_beat * tempo / 60)
+#         track.append(mido.Message('note_off', note=note.note_off_msg.note, velocity=note.note_off_msg.velocity, time=end_tick - start_tick))
+#         last_tick = end_tick
+#
+#     mid.save(filename)
+
+def import_from_midi(filename="output.mid"):
     mid = mido.MidiFile(filename)
     recorded_notes = []
     active_notes = {}
@@ -49,7 +96,7 @@ def import_from_midi(filename="output.mid", tempo=120, ticks_per_beat=480):
                 tempo = mido.tempo2bpm(msg.tempo)
             elif msg.type == 'note_on' and msg.velocity > 0:
                 elapsed_time = elapsed_ticks * 60 / (ticks_per_beat * tempo)
-                active_notes[msg.note] = Note(mido.Message('note_on', note=msg.note, velocity=msg.velocity, time=elapsed_time))
+                active_notes[msg.note] = Note(mido.Message('note_on', note=msg.note, velocity=msg.velocity, time=msg.time))
             elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                 if msg.note in active_notes:
                     elapsed_time = elapsed_ticks * 60 / (ticks_per_beat * tempo)
@@ -126,7 +173,7 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                     note = active_notes.pop(msg.note)
                     note.set_note_off(msg)
                     recorded_notes.append(note)
-                    n_second_print(f"\nRECORD MENU - Added note: {note} press q to quit recording...", 5)
+                    n_second_print(f"\nRECORD MENU - Added note: {note} press q to quit recording...", 1)
                     recorded_notes.sort(key=lambda x: x.start_time)
             if keyboard.is_pressed('q'):
                 logging.info("Stopped adding notes.")
