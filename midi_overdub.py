@@ -5,31 +5,14 @@ import threading  # To allow concurrent playback and recording
 import logging
 from threading import Event
 import heapq
+from collections import defaultdict
+
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 start_time = 0.00
 event = Event()
-
-def export_to_midi(recorded_notes, filename="output.mid"):
-    mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
-    track = mido.MidiTrack()
-    mid.tracks.append(track)
-
-    # Insert tempo event
-    microseconds_per_beat = int(60_000_000 / 120)
-    track.append(mido.MetaMessage('set_tempo', tempo=microseconds_per_beat, time=0))
-
-    # Sort notes by start_time
-    notes = sorted(recorded_notes, key=lambda n: n.start_time)
-    last_tick = 0
-
-    for note in notes:
-        track.append(mido.Message('note_on', note=note.note_on_msg.note, velocity=note.note_on_msg.velocity, time=note.start_time))
-        track.append(mido.Message('note_off', note=note.note_off_msg.note, velocity=note.note_off_msg.velocity, time=note.end_time))
-
-    mid.save(filename)
 
 def export_to_midi(notes, filename='output.mid', bpm=120):
     mid = mido.MidiFile()
@@ -59,52 +42,39 @@ def export_to_midi(notes, filename='output.mid', bpm=120):
 
     mid.save(filename)
 
-# def export_to_midi(recorded_notes, filename="output.mid", tempo=120, ticks_per_beat=480):
-#     mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
-#     track = mido.MidiTrack()
-#     mid.tracks.append(track)
-#
-#     # Insert tempo event
-#     microseconds_per_beat = int(60_000_000 / tempo)
-#     track.append(mido.MetaMessage('set_tempo', tempo=microseconds_per_beat, time=0))
-#
-#     # Sort notes by start_time
-#     notes = sorted(recorded_notes, key=lambda n: n.start_time)
-#     last_tick = 0
-#
-#     for note in notes:
-#         start_tick = int(note.start_time * ticks_per_beat * tempo / 60)
-#         delta = start_tick - last_tick
-#         track.append(mido.Message('note_on', note=note.note_on_msg.note, velocity=note.note_on_msg.velocity, time=delta))
-#         end_tick = int(note.end_time * ticks_per_beat * tempo / 60)
-#         track.append(mido.Message('note_off', note=note.note_off_msg.note, velocity=note.note_off_msg.velocity, time=end_tick - start_tick))
-#         last_tick = end_tick
-#
-#     mid.save(filename)
 
-def import_from_midi(filename="output.mid"):
+def import_midi_to_notes(filename):
     mid = mido.MidiFile(filename)
-    recorded_notes = []
-    active_notes = {}
-    tempo = 120  # Default, can be read from the MIDI file if needed
+    ticks_per_beat = mid.ticks_per_beat
+    tempo = 500000  # Default tempo (120 bpm)
 
-    for track in mid.tracks:
-        elapsed_ticks = 0
-        for msg in track:
-            elapsed_ticks += msg.time
-            if msg.type == 'set_tempo':
-                tempo = mido.tempo2bpm(msg.tempo)
-            elif msg.type == 'note_on' and msg.velocity > 0:
-                elapsed_time = elapsed_ticks * 60 / (ticks_per_beat * tempo)
-                active_notes[msg.note] = Note(mido.Message('note_on', note=msg.note, velocity=msg.velocity, time=msg.time))
-            elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                if msg.note in active_notes:
-                    elapsed_time = elapsed_ticks * 60 / (ticks_per_beat * tempo)
-                    note = active_notes.pop(msg.note)
-                    note.set_note_off(mido.Message('note_off', note=msg.note, velocity=msg.velocity, time=elapsed_time))
-                    recorded_notes.append(note)
-    recorded_notes.sort(key=lambda x: x.start_time)
-    return recorded_notes
+    notes = []
+    note_starts = defaultdict(list)
+
+    # We'll accumulate ticks and convert to seconds
+    abs_ticks = 0
+    current_time = 0
+
+    for msg in mid.tracks[0]:  # assuming single-track MIDI
+        abs_ticks += msg.time
+        current_time = mido.tick2second(abs_ticks, ticks_per_beat, tempo)
+
+        if msg.type == 'set_tempo':
+            tempo = msg.tempo
+
+        elif msg.type == 'note_on':
+            note_on_msg = msg.copy(time=current_time)
+            note_starts[msg.note].append(note_on_msg)
+
+        elif msg.type == 'note_off':
+            if note_starts[msg.note]:
+                note_on_msg = note_starts[msg.note].pop(0)
+                note_off_msg = msg.copy(time=current_time)
+                logging.debug(f"note_off_msg.time: {note_off_msg.time}")
+                note = Note(note_on_msg, note_off_msg)
+                notes.append(note)
+
+    return notes
 
 
 def n_second_print(output_string, t=1):
@@ -144,9 +114,12 @@ def get_seq_elapsed_time():
 
 class Note:
     def __init__(self, note_on_msg, note_off_msg=None):
+        self.end_time = None
+        self.note_off_msg = None
         self.note_on_msg = note_on_msg
-        self.note_off_msg = note_off_msg
         self.start_time = note_on_msg.time
+        if note_off_msg:
+            self.set_note_off(note_off_msg)
 
     def set_note_off(self, note_off_msg):
         self.note_off_msg = note_off_msg
@@ -205,6 +178,22 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
                 event.wait(max(0, sleep_time))
                 outport.send(msg)
                 logging.debug(f"Played: {msg} ({event_type})")
+
+                if keyboard.is_pressed('+' ):
+                    n_second_print("increasing tempo...", 1)
+                    events = change_tempo(events, recorded_notes, 0.9)
+
+                if keyboard.is_pressed('-'):
+                    n_second_print("decreasing tempo...", 1)
+                    events = change_tempo(events, recorded_notes, 1.1)
+
+
+def change_tempo(loop_events, recorded_notes, multiplier):
+    for note in recorded_notes:
+        note.start_time = note.start_time * multiplier
+        note.end_time = note.end_time * multiplier
+        for event in loop_events:
+    return
 
 
 def update_event_queue(events, recorded_notes):
@@ -285,16 +274,20 @@ def main():
 
         if keyboard.is_pressed('s'):
             # Save the recorded notes as a timestamped MIDI file
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"recording_{timestamp}.mid"
+            filename = input("Enter the filename of the MIDI file to save as: ").strip()
+            if not filename:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"recording_{timestamp}.mid"
+            filename = filename + ".mid" if not filename.endswith(".mid") else filename
             export_to_midi(recorded_notes, filename=filename)
             logging.info(f"Saved recording as {filename}")
 
         if keyboard.is_pressed('l'):
             # Load MIDI file into recorded_notes
             filename = input("Enter the filename of the MIDI file to load: ").strip()
+            filename = filename + ".mid" if not filename.endswith(".mid") else filename
             try:
-                recorded_notes = import_from_midi(filename)
+                recorded_notes = import_midi_to_notes(filename)
                 logging.info(f"Successfully loaded MIDI file: {filename}")
             except FileNotFoundError:
                 logging.error(f"File not found: {filename}")
