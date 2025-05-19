@@ -159,6 +159,7 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
     logging.info("play_midi_smarter...")
     with mido.open_output(output_port) as outport:
         events = []
+        tempo_change = False
         update_event_queue(events, recorded_notes)
         recorded_notes_size = len(recorded_notes)
 
@@ -166,6 +167,11 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
             if(recorded_notes_size !=  len(recorded_notes)):
                 update_event_queue(events, recorded_notes)
                 recorded_notes_size = len(recorded_notes)
+
+            if tempo_change:
+                events = []
+                update_event_queue(events, recorded_notes)
+                tempo_change = False
 
             set_seq_start_time()
             loop_events = list(events)  # Create a copy of the events heap
@@ -181,19 +187,22 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
 
                 if keyboard.is_pressed('+' ):
                     n_second_print("increasing tempo...", 1)
-                    events = change_tempo(events, recorded_notes, 0.9)
+                    recorded_notes = change_tempo(recorded_notes, 0.9)
+                    tempo_change = True
+                    break
 
                 if keyboard.is_pressed('-'):
                     n_second_print("decreasing tempo...", 1)
-                    events = change_tempo(events, recorded_notes, 1.1)
+                    recorded_notes = change_tempo(recorded_notes, 1.1)
+                    tempo_change = True
+                    break
 
 
-def change_tempo(loop_events, recorded_notes, multiplier):
+def change_tempo(recorded_notes, multiplier):
     for note in recorded_notes:
         note.start_time = note.start_time * multiplier
         note.end_time = note.end_time * multiplier
-        for event in loop_events:
-    return
+    return recorded_notes
 
 
 def update_event_queue(events, recorded_notes):
