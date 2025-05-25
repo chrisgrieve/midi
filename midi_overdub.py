@@ -186,15 +186,17 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
                 logging.debug(f"Played: {msg} ({event_type})")
 
                 if keyboard.is_pressed('+' ):
-                    n_second_print("increasing tempo...", 1)
-                    recorded_notes = change_tempo(recorded_notes, 0.9)
-                    tempo_change = True
+                    if not tempo_change:
+                        n_second_print("increasing tempo...", 1)
+                        recorded_notes = change_tempo(recorded_notes, 0.9)
+                        tempo_change = True
                     break
 
                 if keyboard.is_pressed('-'):
-                    n_second_print("decreasing tempo...", 1)
-                    recorded_notes = change_tempo(recorded_notes, 1.1)
-                    tempo_change = True
+                    if not tempo_change:
+                        n_second_print("decreasing tempo...", 1)
+                        recorded_notes = change_tempo(recorded_notes, 1.1)
+                        tempo_change = True
                     break
 
 
