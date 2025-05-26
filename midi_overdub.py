@@ -128,7 +128,41 @@ class Note:
     def __repr__(self):
         return f'Note (ON: {self.note_on_msg}, OFF: {self.note_off_msg})'
 
-def record_midi(is_playing, recorded_notes, input_port=None):
+
+class Phrase:
+    def __init__(self):
+        self.notes = []  # List[Note]
+
+    def clear(self):
+        self.notes.clear()
+
+    def add_notes(self, new_notes):
+        self.notes.extend(new_notes)
+
+    def export_to_midi(self, filename):
+        # Your existing export logic here
+        pass
+
+
+
+class Song:
+    def __init__(self, num_phrases=9):
+        self.phrases = [Phrase() for i in range(num_phrases)]
+        self.playing_phrase_index = 0
+
+    def get_playing_phrase(self):
+        logging.debug(f"self.phrases: {self.phrases}")
+        return self.phrases[self.playing_phrase_index]
+
+    def set_playing_phrase(self, phrase):
+        self.phrases[self.playing_phrase_index] = phrase
+
+
+
+
+
+
+def record_midi(is_playing, song, input_port=None):
     """Continuously records notes and adds them to the sequence."""
     logging.info("record_midi...")
     active_notes = {}
@@ -136,7 +170,7 @@ def record_midi(is_playing, recorded_notes, input_port=None):
     with mido.open_input(input_port) as inport:
         while is_playing():
             for msg in inport.iter_pending():
-                if not (active_notes or recorded_notes):
+                if not (active_notes or song.get_playing_phrase()):
                     set_seq_start_time()
 
                 msg.time = get_seq_elapsed_time()
@@ -145,32 +179,32 @@ def record_midi(is_playing, recorded_notes, input_port=None):
                 elif msg.type == 'note_off' and msg.note in active_notes:
                     note = active_notes.pop(msg.note)
                     note.set_note_off(msg)
-                    recorded_notes.append(note)
+                    song.get_playing_phrase().append(note)
                     n_second_print(f"\nRECORD MENU - Added note: {note} press q to quit recording...", 1)
-                    recorded_notes.sort(key=lambda x: x.start_time)
+                    song.get_playing_phrase().sort(key=lambda x: x.start_time)
             if keyboard.is_pressed('q'):
                 logging.info("Stopped adding notes.")
-                for note in recorded_notes:
+                for note in song.get_playing_phrase():
                     logging.debug(note)
                 return
 
-def play_midi_smarter(is_playing, recorded_notes, output_port=None):
+def play_midi_smarter(is_playing, song, output_port=None):
     """Plays recorded notes, handling overlapping notes more efficiently."""
     logging.info("play_midi_smarter...")
     with mido.open_output(output_port) as outport:
         events = []
         tempo_change = False
-        update_event_queue(events, recorded_notes)
-        recorded_notes_size = len(recorded_notes)
+        update_event_queue(events, song)
+        recorded_notes_size = len(song.get_playing_phrase())
 
         while is_playing():
-            if(recorded_notes_size !=  len(recorded_notes)):
-                update_event_queue(events, recorded_notes)
-                recorded_notes_size = len(recorded_notes)
+            if(recorded_notes_size != len(song.get_playing_phrase())):
+                update_event_queue(events, song.get_playing_phrase())
+                recorded_notes_size = len(song.get_playing_phrase())
 
             if tempo_change:
                 events = []
-                update_event_queue(events, recorded_notes)
+                update_event_queue(events, song.get_playing_phrase())
                 tempo_change = False
 
             set_seq_start_time()
@@ -188,33 +222,37 @@ def play_midi_smarter(is_playing, recorded_notes, output_port=None):
                 if keyboard.is_pressed('+' ):
                     if not tempo_change:
                         n_second_print("increasing tempo...", 1)
-                        recorded_notes = change_tempo(recorded_notes, 0.9)
+                        song.set_playing_phrase(change_tempo(song.get_playing_phrase(), 0.9))
                         tempo_change = True
                     break
 
                 if keyboard.is_pressed('-'):
                     if not tempo_change:
                         n_second_print("decreasing tempo...", 1)
-                        recorded_notes = change_tempo(recorded_notes, 1.1)
+                        song.set_playing_phrase(change_tempo(song.get_playing_phrase(), 1.1))
                         tempo_change = True
                     break
 
 
-def change_tempo(recorded_notes, multiplier):
-    for note in recorded_notes:
+def change_tempo(song, multiplier):
+    result = Phrase()
+    for note in song.get_playing_phrase():
         note.start_time = note.start_time * multiplier
         note.end_time = note.end_time * multiplier
-    return recorded_notes
+        result.notes.append(note)
+    return result
 
 
-def update_event_queue(events, recorded_notes):
-    for note in recorded_notes:
+def update_event_queue(events, song):
+    logging.debug(f"song: {song}")
+    logging.debug(f"song.get_playing_phrase(): {song.get_playing_phrase()}")
+    for note in song.get_playing_phrase().notes:
         # Push note on and off events to the priority queue
         heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
         heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
 
 
-def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
+def start_overdub_loop(song, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
     logging.info("start_loop...")
     playing = [True]  # Mutable object to control playback state
@@ -226,18 +264,18 @@ def start_overdub_loop(recorded_notes, input_port=None, output_port=None):
         playing[0] = False
 
     # Start playback in a separate thread
-    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, recorded_notes, output_port))
+    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, song, output_port))
     playback_thread.start()
 
     logging.info("dropping in to start_loop...")
 
     # Allow real-time recording while playing
-    record_midi(is_playing, recorded_notes, input_port)
+    record_midi(is_playing, song, input_port)
 
     stop_playing()
     playback_thread.join()  # Wait for playback to finish
 
-def start_play_loop(recorded_notes, input_port=None, output_port=None):
+def start_play_loop(song, input_port=None, output_port=None):
     """Starts looping playback and allows overdubbing."""
     logging.info("start_loop...")
     playing = [True]  # Mutable object to control playback state
@@ -249,7 +287,7 @@ def start_play_loop(recorded_notes, input_port=None, output_port=None):
         playing[0] = False
 
     # Start playback in a separate thread
-    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, recorded_notes, output_port))
+    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, song, output_port))
     playback_thread.start()
 
     logging.info("dropping in to start_loop...")
@@ -265,7 +303,7 @@ def start_play_loop(recorded_notes, input_port=None, output_port=None):
     playback_thread.join()  # Wait for playback to finish
 
 def main():
-    recorded_notes = []
+    song = Song(10)
     input_port = find_input_port()
     output_port = find_output_port()
 
@@ -273,15 +311,15 @@ def main():
         n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 's' to save, 'l' to load, 'x' to exit.", 5)
 
         if keyboard.is_pressed('r'):
-            recorded_notes.clear()  # Clear previous recordings
+            song.get_playing_phrase().clear()  # Clear previous recordings
             set_seq_start_time()
-            record_midi(lambda: True, recorded_notes, input_port)
+            record_midi(lambda: True, song.get_playing_phrase(), input_port)
 
         if keyboard.is_pressed('o'):
-            start_overdub_loop(recorded_notes, input_port, output_port)
+            start_overdub_loop(song.get_playing_phrase(), input_port, output_port)
 
         if keyboard.is_pressed('p'):
-            start_play_loop(recorded_notes, input_port, output_port)
+            start_play_loop(song.get_playing_phrase(), input_port, output_port)
 
         if keyboard.is_pressed('s'):
             # Save the recorded notes as a timestamped MIDI file
@@ -290,15 +328,15 @@ def main():
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filename = f"recording_{timestamp}.mid"
             filename = filename + ".mid" if not filename.endswith(".mid") else filename
-            export_to_midi(recorded_notes, filename=filename)
+            export_to_midi(song.get_playing_phrase(), filename=filename)
             logging.info(f"Saved recording as {filename}")
 
         if keyboard.is_pressed('l'):
-            # Load MIDI file into recorded_notes
+            # Load MIDI file into song.get_playing_phrase()
             filename = input("Enter the filename of the MIDI file to load: ").strip()
             filename = filename + ".mid" if not filename.endswith(".mid") else filename
             try:
-                recorded_notes = import_midi_to_notes(filename)
+                song.set_playing_phrase(import_midi_to_notes(filename))
                 logging.info(f"Successfully loaded MIDI file: {filename}")
             except FileNotFoundError:
                 logging.error(f"File not found: {filename}")
