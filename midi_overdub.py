@@ -82,6 +82,11 @@ class Phrase:
     def sort(self, key):
         self.notes.sort(key=key)
 
+    def change_tempo(self, multiplier):
+        for note in self.notes:
+            note.start_time = note.start_time * multiplier
+            note.end_time = note.end_time * multiplier
+
     def import_midi(self, filename):
         self.clear()
         mid = mido.MidiFile(filename)
@@ -185,16 +190,17 @@ def play_midi_smarter(is_playing, song, output_port=None):
         events = []
         tempo_change = False
         update_event_queue(events, song)
-        recorded_notes_size = len(song.get_playing_phrase())
+        phrase = song.get_playing_phrase()
+        recorded_notes_size = len(phrase)
 
         while is_playing():
-            if(recorded_notes_size != len(song.get_playing_phrase())):
-                update_event_queue(events, song.get_playing_phrase())
-                recorded_notes_size = len(song.get_playing_phrase())
+            if(recorded_notes_size != len(phrase)):
+                update_event_queue(events, phrase)
+                recorded_notes_size = len(phrase)
 
             if tempo_change:
                 events = []
-                update_event_queue(events, song.get_playing_phrase())
+                update_event_queue(events, phrase)
                 tempo_change = False
 
             set_seq_start_time()
@@ -212,25 +218,18 @@ def play_midi_smarter(is_playing, song, output_port=None):
                 if keyboard.is_pressed('+' ):
                     if not tempo_change:
                         n_second_print("increasing tempo...", 1)
-                        song.set_playing_phrase(change_tempo(song.get_playing_phrase(), 0.9))
+                        song.set_playing_phrase(phrase.change_tempo(0.9))
                         tempo_change = True
                     break
 
                 if keyboard.is_pressed('-'):
                     if not tempo_change:
                         n_second_print("decreasing tempo...", 1)
-                        song.set_playing_phrase(change_tempo(song.get_playing_phrase(), 1.1))
+                        song.set_playing_phrase(phrase.change_tempo(1.1))
                         tempo_change = True
                     break
 
 
-def change_tempo(song, multiplier):
-    result = Phrase()
-    for note in song.get_playing_phrase():
-        note.start_time = note.start_time * multiplier
-        note.end_time = note.end_time * multiplier
-        result.notes.append(note)
-    return result
 
 
 def update_event_queue(events, song):
