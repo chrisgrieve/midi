@@ -157,6 +157,62 @@ class Song:
     def set_playing_phrase(self, phrase):
         self.phrases[self.playing_phrase_index] = phrase
 
+class Player:
+    def __init__(self, output_port):
+        self.output_port = output_port
+        self.tempo_multiplier = 1.0
+
+    def update_event_queue(self, events, phrase):
+        for note in phrase.notes:
+            # Push note on and off events to the priority queue
+            heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
+            heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
+
+    def play(self, phrase: Phrase, is_playing):
+        logging.info("play_midi_smarter...")
+        with mido.open_output(self.output_port) as outport:
+            events = []
+            tempo_change = False
+            self.update_event_queue(events, phrase)
+            recorded_notes_size = len(phrase)
+
+            while is_playing():
+                if (recorded_notes_size != len(phrase)):
+                    self.update_event_queue(events, phrase)
+                    recorded_notes_size = len(phrase)
+
+                if tempo_change:
+                    events = []
+                    self.update_event_queue(events, phrase)
+                    tempo_change = False
+
+                set_seq_start_time()
+                loop_events = list(events)  # Create a copy of the events heap
+                heapq.heapify(loop_events)  # Ensure it's a valid heap
+                while loop_events:
+                    event_time, msg, event_type = heapq.heappop(loop_events)
+                    logging.debug(f"event_time: {event_time})")
+                    sleep_time = event_time - get_seq_elapsed_time()
+                    logging.debug(f"sleep_time: {sleep_time})")
+                    event.wait(max(0, sleep_time))
+                    outport.send(msg)
+                    logging.debug(f"Played: {msg} ({event_type})")
+
+                    if keyboard.is_pressed('+'):
+                        if not tempo_change:
+                            n_second_print("increasing tempo...", 1)
+                            phrase.change_tempo(0.9)
+                            tempo_change = True
+                        break
+
+                    if keyboard.is_pressed('-'):
+                        if not tempo_change:
+                            n_second_print("decreasing tempo...", 1)
+                            phrase.change_tempo(1.1)
+                            tempo_change = True
+                        break
+
+
 def record_midi(is_playing, song, input_port=None):
     """Continuously records notes and adds them to the sequence."""
     logging.info("record_midi...")
@@ -264,7 +320,7 @@ def start_overdub_loop(song, input_port=None, output_port=None):
     stop_playing()
     playback_thread.join()  # Wait for playback to finish
 
-def start_play_loop(song, input_port=None, output_port=None):
+def start_play_loop(song, player):
     """Starts looping playback and allows overdubbing."""
     logging.info("start_loop...")
     playing = [True]  # Mutable object to control playback state
@@ -276,7 +332,7 @@ def start_play_loop(song, input_port=None, output_port=None):
         playing[0] = False
 
     # Start playback in a separate thread
-    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, song, output_port))
+    playback_thread = threading.Thread(target=player.play, args=(song.get_playing_phrase(), is_playing))
     playback_thread.start()
 
     logging.info("dropping in to start_loop...")
@@ -295,6 +351,7 @@ def main():
     song = Song(10)
     input_port = find_input_port()
     output_port = find_output_port()
+    player = Player(output_port)
 
     while True:
         n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 's' to save, 'l' to load, 'x' to exit.", 5)
@@ -308,7 +365,7 @@ def main():
             start_overdub_loop(song, input_port, output_port)
 
         if keyboard.is_pressed('p'):
-            start_play_loop(song, input_port, output_port)
+            start_play_loop(song, player)
 
         if keyboard.is_pressed('s'):
             # Save the recorded notes as a timestamped MIDI file
