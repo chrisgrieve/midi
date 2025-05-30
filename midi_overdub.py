@@ -69,15 +69,19 @@ class Note:
 class Phrase:
     def __init__(self):
         self.notes = []
+        self.updated = False
 
     def clear(self):
         self.notes.clear()
+        self.updated = True
 
     def add_notes(self, new_notes):
         self.notes.extend(new_notes)
+        self.updated = True
 
     def append(self, note):
         self.notes.append(note)
+        self.updated = True
 
     def sort(self, key):
         self.notes.sort(key=key)
@@ -86,6 +90,7 @@ class Phrase:
         for note in self.notes:
             note.start_time = note.start_time * multiplier
             note.end_time = note.end_time * multiplier
+            self.updated = True
 
     def import_midi(self, filename):
         self.clear()
@@ -156,6 +161,35 @@ class Song:
 
     def set_playing_phrase(self, phrase):
         self.phrases[self.playing_phrase_index] = phrase
+class Recorder:
+    def __init__(self, input_port):
+        self.input_port = input_port
+
+    def record_phrase(self, phrase, is_playing):
+        logging.info("Recorder: recording started...")
+        active_notes = {}
+
+        with mido.open_input(self.input_port) as inport:
+            while is_playing():
+                for msg in inport.iter_pending():
+                    if not (active_notes or phrase):
+                        set_seq_start_time()
+
+                    msg.time = get_seq_elapsed_time()
+                    if msg.type == 'note_on':
+                        active_notes[msg.note] = Note(msg)
+                    elif msg.type == 'note_off' and msg.note in active_notes:
+                        note = active_notes.pop(msg.note)
+                        note.set_note_off(msg)
+                        phrase.append(note)
+                        n_second_print(f"\nRECORD MENU - Added note: {note} press q to quit recording...", 1)
+                        phrase.sort(key=lambda x: x.start_time)
+
+                if keyboard.is_pressed('q'):
+                    logging.info("Recorder: recording stopped.")
+                    for note in phrase:
+                        logging.debug(note)
+                    return
 
 class Player:
     def __init__(self, output_port):
@@ -163,13 +197,16 @@ class Player:
         self.tempo_multiplier = 1.0
 
     def update_event_queue(self, events, phrase):
+        events.clear()
         for note in phrase.notes:
             # Push note on and off events to the priority queue
+            note.start_time = note.start_time * self.tempo_multiplier
+            note.end_time = note.end_time * self.tempo_multiplier
             heapq.heappush(events, (note.start_time, note.note_on_msg, 'on'))
             heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
 
     def play(self, phrase: Phrase, is_playing):
-        logging.info("play_midi_smarter...")
+        logging.info("playing...")
         with mido.open_output(self.output_port) as outport:
             events = []
             tempo_change = False
@@ -177,14 +214,10 @@ class Player:
             recorded_notes_size = len(phrase)
 
             while is_playing():
-                if (recorded_notes_size != len(phrase)):
+                # if (recorded_notes_size != len(phrase)):
+                if phrase.updated:
                     self.update_event_queue(events, phrase)
-                    recorded_notes_size = len(phrase)
-
-                if tempo_change:
-                    events = []
-                    self.update_event_queue(events, phrase)
-                    tempo_change = False
+                    phrase.updated = False
 
                 set_seq_start_time()
                 loop_events = list(events)  # Create a copy of the events heap
@@ -198,95 +231,6 @@ class Player:
                     outport.send(msg)
                     logging.debug(f"Played: {msg} ({event_type})")
 
-                    if keyboard.is_pressed('+'):
-                        if not tempo_change:
-                            n_second_print("increasing tempo...", 1)
-                            phrase.change_tempo(0.9)
-                            tempo_change = True
-                        break
-
-                    if keyboard.is_pressed('-'):
-                        if not tempo_change:
-                            n_second_print("decreasing tempo...", 1)
-                            phrase.change_tempo(1.1)
-                            tempo_change = True
-                        break
-
-
-def record_midi(is_playing, song, input_port=None):
-    """Continuously records notes and adds them to the sequence."""
-    logging.info("record_midi...")
-    active_notes = {}
-
-    with mido.open_input(input_port) as inport:
-        while is_playing():
-            for msg in inport.iter_pending():
-                if not (active_notes or song.get_playing_phrase()):
-                    set_seq_start_time()
-
-                msg.time = get_seq_elapsed_time()
-                if msg.type == 'note_on':
-                    active_notes[msg.note] = Note(msg)
-                elif msg.type == 'note_off' and msg.note in active_notes:
-                    note = active_notes.pop(msg.note)
-                    note.set_note_off(msg)
-                    song.get_playing_phrase().append(note)
-                    n_second_print(f"\nRECORD MENU - Added note: {note} press q to quit recording...", 1)
-                    song.get_playing_phrase().sort(key=lambda x: x.start_time)
-            if keyboard.is_pressed('q'):
-                logging.info("Stopped adding notes.")
-                for note in song.get_playing_phrase():
-                    logging.debug(note)
-                return
-
-def play_midi_smarter(is_playing, song, output_port=None):
-    """Plays recorded notes, handling overlapping notes more efficiently."""
-    logging.info("play_midi_smarter...")
-    with mido.open_output(output_port) as outport:
-        events = []
-        tempo_change = False
-        update_event_queue(events, song)
-        phrase = song.get_playing_phrase()
-        recorded_notes_size = len(phrase)
-
-        while is_playing():
-            if(recorded_notes_size != len(phrase)):
-                update_event_queue(events, phrase)
-                recorded_notes_size = len(phrase)
-
-            if tempo_change:
-                events = []
-                update_event_queue(events, phrase)
-                tempo_change = False
-
-            set_seq_start_time()
-            loop_events = list(events)  # Create a copy of the events heap
-            heapq.heapify(loop_events)  # Ensure it's a valid heap
-            while loop_events:
-                event_time, msg, event_type = heapq.heappop(loop_events)
-                logging.debug(f"event_time: {event_time})")
-                sleep_time = event_time - get_seq_elapsed_time()
-                logging.debug(f"sleep_time: {sleep_time})")
-                event.wait(max(0, sleep_time))
-                outport.send(msg)
-                logging.debug(f"Played: {msg} ({event_type})")
-
-                if keyboard.is_pressed('+' ):
-                    if not tempo_change:
-                        n_second_print("increasing tempo...", 1)
-                        song.set_playing_phrase(phrase.change_tempo(0.9))
-                        tempo_change = True
-                    break
-
-                if keyboard.is_pressed('-'):
-                    if not tempo_change:
-                        n_second_print("decreasing tempo...", 1)
-                        song.set_playing_phrase(phrase.change_tempo(1.1))
-                        tempo_change = True
-                    break
-
-
-
 
 def update_event_queue(events, song):
     logging.debug(f"song: {song}")
@@ -297,8 +241,10 @@ def update_event_queue(events, song):
         heapq.heappush(events, (note.end_time, note.note_off_msg, 'off'))
 
 
-def start_overdub_loop(song, input_port=None, output_port=None):
-    """Starts looping playback and allows overdubbing."""
+def start_overdub_loop(song, player, recorder):
+    """Starts looping playback and allows overdubbing.
+    :param recorder:
+    """
     logging.info("start_loop...")
     playing = [True]  # Mutable object to control playback state
 
@@ -309,13 +255,14 @@ def start_overdub_loop(song, input_port=None, output_port=None):
         playing[0] = False
 
     # Start playback in a separate thread
-    playback_thread = threading.Thread(target=play_midi_smarter, args=(is_playing, song, output_port))
+    phrase = song.get_playing_phrase()
+    playback_thread = threading.Thread(target=player.play, args=(phrase, is_playing))
     playback_thread.start()
 
     logging.info("dropping in to start_loop...")
 
     # Allow real-time recording while playing
-    record_midi(is_playing, song, input_port)
+    recorder.record_phrase(phrase, is_playing)
 
     stop_playing()
     playback_thread.join()  # Wait for playback to finish
@@ -332,17 +279,37 @@ def start_play_loop(song, player):
         playing[0] = False
 
     # Start playback in a separate thread
-    playback_thread = threading.Thread(target=player.play, args=(song.get_playing_phrase(), is_playing))
+    playing_phrase = song.get_playing_phrase()
+    playback_thread = threading.Thread(target=player.play, args=(playing_phrase, is_playing))
     playback_thread.start()
 
     logging.info("dropping in to start_loop...")
 
     while is_playing():
-        n_second_print(f"\nPLAY MENU: press q to quit playing...", 5)
+        n_second_print(f"\nPLAY MENU: press q to quit playing, +/- to increase/decrease tempo...", 5)
 
-        if keyboard.is_pressed('q'):
-            logging.info("Stop playing notes.")
-            break
+        event = keyboard.read_event(suppress=False)
+
+        if event.event_type == 'down':  # Only respond on key press, not release
+            if event.name == '+':
+                player.tempo_multiplier = max(0.1, player.tempo_multiplier * 0.9)
+                print(f"Tempo: {player.tempo_multiplier:.2f}x")
+
+            elif event.name == '-':
+                player.tempo_multiplier = min(5.0, player.tempo_multiplier * 1.1)
+                print(f"Tempo: {player.tempo_multiplier:.2f}x")
+
+            elif event.name == '0':
+                player.tempo_multiplier = 1.0
+                print("Tempo reset to 1.0x")
+
+            elif event.name == 'q':
+                print("Exiting play loop.")
+                stop_playing()
+
+        time.sleep(0.01)  # Tiny sleep to avoid high CPU usage
+
+
 
     stop_playing()
     playback_thread.join()  # Wait for playback to finish
@@ -352,6 +319,7 @@ def main():
     input_port = find_input_port()
     output_port = find_output_port()
     player = Player(output_port)
+    recorder = Recorder(input_port)
 
     while True:
         n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 's' to save, 'l' to load, 'x' to exit.", 5)
@@ -359,10 +327,10 @@ def main():
         if keyboard.is_pressed('r'):
             song.get_playing_phrase().clear()  # Clear previous recordings
             set_seq_start_time()
-            record_midi(lambda: True, song.get_playing_phrase(), input_port)
+            recorder.record_phrase(song.get_playing_phrase(), lambda: True)
 
         if keyboard.is_pressed('o'):
-            start_overdub_loop(song, input_port, output_port)
+            start_overdub_loop(song, player, recorder)
 
         if keyboard.is_pressed('p'):
             start_play_loop(song, player)
