@@ -1,11 +1,133 @@
 import mido
 import time
 import keyboard  # To detect laptop key presses
+import pynput
 import threading  # To allow concurrent playback and recording
 import logging
 from threading import Event
 import heapq
 from collections import defaultdict
+
+# Add/replace this KeyHandler in your midi_overdub.py
+
+import time
+import threading
+import queue
+
+class KeyHandler:
+    """
+    Event-driven key handler:
+    - If use_queue=True we force a pynput fallback and queue single-character presses.
+    - Normalizes keys to lowercase single chars.
+    - get_key_nowait() returns the next available char or None.
+    - stop() stops the listener.
+    """
+    def __init__(self, use_queue=False):
+        self._use_queue = bool(use_queue)
+        self._native = False
+        self._listener = None
+        self._queue = None
+
+        # If we need a queue, force pynput fallback so behavior is consistent
+        if self._use_queue:
+            try:
+                from pynput import keyboard as _pynput
+            except Exception as e:
+                raise RuntimeError("pynput is required for queue mode: pip install pynput") from e
+
+            self._queue = queue.Queue()
+
+            def _on_press(key):
+                try:
+                    ch = key.char
+                except AttributeError:
+                    return
+                if not ch:
+                    return
+                ch = ch.lower()
+                # Put single-char key into queue (non-blocking)
+                try:
+                    self._queue.put_nowait(ch)
+                except queue.Full:
+                    pass
+
+            self._listener = _pynput.Listener(on_press=_on_press)
+            self._listener.daemon = True
+            self._listener.start()
+            self._native = False
+            return
+
+        # If not using queue, try to use native keyboard module for is_pressed fallback,
+        # otherwise use pynput polling fallback.
+        try:
+            import keyboard as _keyboard  # prefer native module for is_pressed
+            self._keyboard = _keyboard
+            self._native = True
+        except Exception:
+            # fallback polling with pynput
+            try:
+                from pynput import keyboard as _pynput
+            except Exception as e:
+                raise RuntimeError("pynput is required for fallback mode: pip install pynput") from e
+
+            self._pressed = set()
+            self._lock = threading.Lock()
+
+            def _on_press(key):
+                try:
+                    ch = key.char
+                except AttributeError:
+                    return
+                if not ch:
+                    return
+                ch = ch.lower()
+                with self._lock:
+                    self._pressed.add(ch)
+
+            def _on_release(key):
+                try:
+                    ch = key.char
+                except AttributeError:
+                    return
+                if not ch:
+                    return
+                ch = ch.lower()
+                with self._lock:
+                    self._pressed.discard(ch)
+
+            self._listener = _pynput.Listener(on_press=_on_press, on_release=_on_release)
+            self._listener.daemon = True
+            self._listener.start()
+            self._native = False
+
+    def is_pressed(self, ch):
+        if not ch:
+            return False
+        ch = ch.lower()
+        if self._native:
+            try:
+                return self._keyboard.is_pressed(ch)
+            except Exception:
+                return False
+        # fallback polling
+        with getattr(self, "_lock", threading.Lock()):
+            return ch in getattr(self, "_pressed", set())
+
+    def get_key_nowait(self):
+        """Return next queued key (one-char str) or None. Only works when in queue mode."""
+        if not self._use_queue or self._queue is None:
+            return None
+        try:
+            return self._queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    def stop(self):
+        try:
+            if self._listener:
+                self._listener.stop()
+        except Exception:
+            pass
 
 
 # Configure logging
@@ -269,47 +391,66 @@ def main():
     input_port = find_input_port()
     output_port = find_output_port()
 
-    while True:
-        n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 's' to save, 'l' to load, 'x' to exit.", 5)
+    kh = KeyHandler(use_queue=True)   # event-driven queue
 
-        if keyboard.is_pressed('r'):
-            recorded_notes.clear()  # Clear previous recordings
-            set_seq_start_time()
-            record_midi(lambda: True, recorded_notes, input_port)
+    print("DEBUG: native:", getattr(kh, "_native", None), "use_queue:", getattr(kh, "_use_queue", None))
+    try:
+        recorded_notes = []
+        input_port = find_input_port()
+        output_port = find_output_port()
 
-        if keyboard.is_pressed('o'):
-            start_overdub_loop(recorded_notes, input_port, output_port)
+        while True:
+            n_second_print("\nMAIN MENU: Press 'r' to record, 'p' to just play, 'o' to play & overdub, 's' to save, 'l' to load, 'x' to exit.", 5)
 
-        if keyboard.is_pressed('p'):
-            start_play_loop(recorded_notes, input_port, output_port)
+            k = kh.get_key_nowait()
+            print("DEBUG: raw key:", repr(k))
 
-        if keyboard.is_pressed('s'):
-            # Save the recorded notes as a timestamped MIDI file
-            filename = input("Enter the filename of the MIDI file to save as: ").strip()
-            if not filename:
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"recording_{timestamp}.mid"
-            filename = filename + ".mid" if not filename.endswith(".mid") else filename
-            export_to_midi(recorded_notes, filename=filename)
-            logging.info(f"Saved recording as {filename}")
+            if not k:
+                # nothing pressed — avoid busy loop
+                time.sleep(0.05)
+                continue
 
-        if keyboard.is_pressed('l'):
-            # Load MIDI file into recorded_notes
-            filename = input("Enter the filename of the MIDI file to load: ").strip()
-            filename = filename + ".mid" if not filename.endswith(".mid") else filename
-            try:
-                recorded_notes = import_midi_to_notes(filename)
-                logging.info(f"Successfully loaded MIDI file: {filename}")
-            except FileNotFoundError:
-                logging.error(f"File not found: {filename}")
-            except Exception as e:
-                logging.error(f"Failed to load MIDI file: {e}")
+            if k == 'r':
+                recorded_notes.clear()  # Clear previous recordings
+                set_seq_start_time()
+                record_midi(lambda: True, recorded_notes, input_port)
 
-        if keyboard.is_pressed('x'):
-            logging.info("Exiting program.")
-            break
+            elif k == 'o':
+                start_overdub_loop(recorded_notes, input_port, output_port)
 
-        time.sleep(0.1)  # Small delay to prevent high CPU usage
+            elif k == 'p':
+                start_play_loop(recorded_notes, input_port, output_port)
+
+            elif k == 's':
+                # Save the recorded notes as a timestamped MIDI file
+                filename = input("Enter the filename of the MIDI file to save as: ").strip()
+                if not filename:
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    filename = f"recording_{timestamp}.mid"
+                filename = filename + ".mid" if not filename.endswith(".mid") else filename
+                export_to_midi(recorded_notes, filename=filename)
+                logging.info(f"Saved recording as {filename}")
+
+            elif (k =='l'):
+                # Load MIDI file into recorded_notes
+                filename = input("Enter the filename of the MIDI file to load: ").strip()
+                filename = filename + ".mid" if not filename.endswith(".mid") else filename
+                try:
+                    recorded_notes = import_midi_to_notes(filename)
+                    logging.info(f"Successfully loaded MIDI file: {filename}")
+                except FileNotFoundError:
+                    logging.error(f"File not found: {filename}")
+                except Exception as e:
+                    logging.error(f"Failed to load MIDI file: {e}")
+
+            elif k == 'x':
+                logging.info("Exiting program.")
+                break
+
+            time.sleep(0.1)  # Small delay to prevent high CPU usage
+
+    finally:
+        kh.stop()
 
 if __name__ == "__main__":
     main()
